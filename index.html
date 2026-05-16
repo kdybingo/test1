@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>우리 어디서 봐? - 최종 완결판</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; text-align: center; background-color: #f4f7f6; }
+        .container { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+        input { width: 80%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; }
+        button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; width: 85%; margin-top: 10px; }
+        #map { width: 100%; height: 450px; margin-top: 20px; border-radius: 10px; border: 1px solid #ccc; } 
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📍 우리 어디서 봐?</h1>
+        <p>각자의 근처 역을 입력하세요!</p>
+        <input type="text" id="p1" placeholder="친구 1의 역" value="홍대입구역">
+        <input type="text" id="p2" placeholder="친구 2의 역" value="강남역">
+        <input type="text" id="p3" placeholder="친구 3의 역" value="천호역">
+        <button onclick="searchMeetingPoint()">중간 지점 찾기</button>
+        
+        <div id="map"></div>
+    </div>
+
+    <!-- ⚠️ 본인의 JavaScript 키를 입력하세요 -->
+    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=88c468682136269d91704dab7d1b2763&libraries=services"></script>
+
+    <script>
+        var mapContainer = document.getElementById('map'); 
+        var mapOption = { center: new kakao.maps.LatLng(37.566826, 126.978656), level: 7 };
+        var map = new kakao.maps.Map(mapContainer, mapOption); 
+        
+        var markers = [];
+        var infoWindows = [];
+        var polyline = null; 
+
+        function clearMap() {
+            markers.forEach(marker => marker.setMap(null));
+            infoWindows.forEach(iw => iw.close());
+            if(polyline) polyline.setMap(null);
+            markers = [];
+            infoWindows = [];
+        }
+
+        function getCoordinate(keyword) {
+            return new Promise((resolve, reject) => {
+                var ps = new kakao.maps.services.Places(); 
+                ps.keywordSearch(keyword, function(data, status) {
+                    if (status === kakao.maps.services.Status.OK) {
+                        resolve({ lat: parseFloat(data[0].y), lng: parseFloat(data[0].x) });
+                    } else {
+                        reject(keyword);
+                    }
+                });
+            });
+        }
+
+        function searchMeetingPoint() {
+            const p1 = document.getElementById('p1').value;
+            const p2 = document.getElementById('p2').value;
+            const p3 = document.getElementById('p3').value;
+
+            if(!p1 || !p2 || !p3) {
+                alert('세 개의 역을 모두 입력해주세요!');
+                return;
+            }
+
+            Promise.all([getCoordinate(p1), getCoordinate(p2), getCoordinate(p3)])
+                .then(coords => {
+                    clearMap();
+
+                    // 1. 물리적 중간 지점 계산
+                    var avgLat = (coords[0].lat + coords[1].lat + coords[2].lat) / 3;
+                    var avgLng = (coords[0].lng + coords[1].lng + coords[2].lng) / 3;
+                    var centerLatLng = new kakao.maps.LatLng(avgLat, avgLng);
+
+                    // 물리적 중심 마커 표시
+                    var centerMarker = new kakao.maps.Marker({ position: centerLatLng, map: map });
+                    markers.push(centerMarker);
+                    
+                    var centerInfoWindow = new kakao.maps.InfoWindow({
+                        content: '<div style="padding:5px; font-size:12px; text-align:center;">🔴 <b>물리적 중심</b></div>'
+                    });
+                    centerInfoWindow.open(map, centerMarker);
+                    infoWindows.push(centerInfoWindow);
+
+                    // 2. 카카오 카테고리(SW8 = 지하철역) 검색 실행으로 수정 완료!
+                    var ps = new kakao.maps.services.Places();
+                    ps.categorySearch('SW8', function(data, status) {
+                        if (status === kakao.maps.services.Status.OK) {
+                            var nearestSubway = data[0]; 
+                            var subwayLatLng = new kakao.maps.LatLng(nearestSubway.y, nearestSubway.x);
+
+                            // 가장 가까운 지하철역 마커 표시
+                            var subwayMarker = new kakao.maps.Marker({ position: subwayLatLng, map: map });
+                            markers.push(subwayMarker);
+
+                            var subwayInfoWindow = new kakao.maps.InfoWindow({
+                                content: '<div style="padding:5px; font-size:12px; text-align:center;">🚇 <b>추천 중간역: ' + nearestSubway.place_name + '</b></div>'
+                            });
+                            subwayInfoWindow.open(map, subwayMarker);
+                            infoWindows.push(subwayInfoWindow);
+
+                            // 3. 두 지점을 이어주는 실선 그리기
+                            polyline = new kakao.maps.Polyline({
+                                path: [centerLatLng, subwayLatLng], 
+                                strokeWeight: 4,            
+                                strokeColor: '#FF3B30',      
+                                strokeOpacity: 0.9,          
+                                strokeStyle: 'solid'         
+                            });
+                            polyline.setMap(map);
+
+                            map.setLevel(5); 
+                            map.panTo(centerLatLng);
+
+                        } else {
+                            alert('중심점 기준 반경 5km 이내에 지하철역을 찾지 못했습니다.');
+                            map.panTo(centerLatLng);
+                        }
+                    }, { location: centerLatLng, radius: 5000 }); 
+                })
+                .catch(error => {
+                    alert('역 검색에 실패했습니다: ' + error);
+                });
+        }
+    </script>
+</body>
+</html>
